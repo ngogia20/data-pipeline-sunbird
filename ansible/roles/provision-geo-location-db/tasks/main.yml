@@ -1,0 +1,67 @@
+- name: Remove previously downloaded files
+  # become_user: "{{ download_user }}"
+  file: path={{ maxmind_db_download_dir }}/{{ maxmind_db_dir_name }}/ state=absent
+
+- name: Remove previously downloaded files
+  # become_user: "{{ download_user }}"
+  file: path={{ maxmind_db_download_dir }}/geoip2-csv-converter-v1.0.0/ state=absent
+
+- name: Remove previously downloaded maxmind_custom_data_mapping.csv file
+  file: path={{ maxmind_db_download_dir }}/maxmind_custom_data_mapping.csv state=absent
+  
+- name: Download maxmind_custom_data_mapping.csv file
+  get_url: url={{ maxmind_custom_data_mapping_url }} dest={{ maxmind_db_download_dir }}/maxmind_custom_data_mapping.csv force=no
+
+- name: Remove archive files
+  become: yes
+  file: path={{ maxmind_db_download_dir }}/{{ maxmind_db_dir_name }}.zip state=absent
+
+- name: Download Maxmind GeoCity database
+  get_url: url={{ maxmind_geocity_db_url }} dest={{ maxmind_db_download_dir }}/{{ maxmind_db_dir_name }}.zip force=no
+
+- name: Unarchive Maxmind GeoCity database
+  unarchive: src={{ maxmind_db_download_dir }}/{{ maxmind_db_dir_name }}.zip dest={{ maxmind_db_download_dir }} copy=no
+
+- name: Rename unzipped geocity directory
+  shell: mv {{ maxmind_db_download_dir }}/{{ maxmind_db_unarchived_dir_prefix }} {{ maxmind_db_download_dir }}/{{ maxmind_db_dir_name }}
+  run_once: true
+
+- name: Download Maxmind GeoIP2 CSV Converter Program v1.0.0
+  get_url: url={{ maxmind_geoip2_csv_converter_url }} dest={{ maxmind_db_download_dir }}/{{ maxmind_db_converter_archive_filename }} force=no
+
+- name: Unarchive Maxmind GeoIP2 CSV Converter
+  become_user: "{{ download_user }}"
+  unarchive: src={{ maxmind_db_download_dir }}/{{ maxmind_db_converter_archive_filename }} dest={{ maxmind_db_download_dir }}/ copy=no
+
+- name: Convert IPV4 CSV database to IP Range database
+  shell: "cd {{ maxmind_db_download_dir }} && ./geoip2-csv-converter-v1.0.0/geoip2-csv-converter -block-file={{ maxmind_db_download_dir }}/{{ maxmind_db_dir_name }}/{{ maxmind_db_geo_city_blocks_filename }} -output-file={{ maxmind_db_download_dir }}/{{ maxmind_db_dir_name }}/{{ maxmind_db_geo_city_ip_range_filename }} -include-integer-range"
+  run_once: true
+
+- name: install psycopg2
+  become: yes
+  package:
+    name: python-psycopg2
+    state: present
+
+- name: Install postgres client to create schema from file
+  become: yes
+  apt:
+    name: postgresql-client
+    state: present
+    update_cache: yes
+
+- name: Copy the templates.
+  become: yes
+  template: src={{item}} dest=/tmp/{{item}}
+  with_items:
+    - psql_schema.sql
+
+- name: Create schema of geolocation db update from template file
+  postgresql_db:
+    login_user: "{{ postgres.db_username }}"
+    login_password: "{{ postgres.db_password }}"
+    login_host: "{{ postgres.db_url }}"
+    name: "{{ postgres.db_name }}"
+    state: restore
+    target: "/tmp/psql_schema.sql"
+
